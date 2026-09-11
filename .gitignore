@@ -21,3 +21,6 @@ Thumbs.db
 
 # uv lock file
 uv.lock
+
+# Node.js (safety net for future projects)
+node_modules/
