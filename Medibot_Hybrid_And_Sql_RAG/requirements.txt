@@ -1,0 +1,19 @@
+python-dotenv
+pandas
+tqdm
+qdrant-client
+sentence-transformers
+docling
+groq
+docling-hierarchical-pdf
+langchain_core
+langchain_huggingface
+langchain_qdrant
+fastembed
+langchain
+langchain-community
+langchain_groq
+langchain_classic
+
+# FastAPI Backend
+fastapi[standard]

@@ -1,0 +1,51 @@
+# Environment variables (contains API keys - NEVER commit!)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Virtual environment (6GB+ - user creates via: uv venv)
+.venv/
+venv/
+ENV/
+
+# Node.js (471MB+ - user creates via: npm install)
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Qdrant vector database (created via: python backend/rag_pipeline.py)
+backend/qdrant_data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Temporary files
+*.tmp
+*.temp
