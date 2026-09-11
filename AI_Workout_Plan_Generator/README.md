@@ -2,7 +2,13 @@
 
 A Streamlit app that generates personalized weekly workout plans using the Groq LLM API.
 
-**Assignment:** Codebasics AI Engineering Cohort - Session 2
+---
+
+## AI Workout Plan Generator UI
+
+![AI Workout Plan Generator UI](images/Workout_Generator_UI_Screenshot.jpg)
+
+---
 
 ## Features
 
@@ -118,15 +124,15 @@ A Streamlit app that generates personalized weekly workout plans using the Groq 
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Screenshots
+## Tech Stack
 
-![Workout Plan Generator UI](images/Workout_Generator_UI_Screenshot.jpg)
+- **Python 3.10+**
+- **Streamlit** - Web UI framework
+- **Groq API** - LLM inference
+- **python-dotenv** - Environment variable management
+- **uv** - Fast Python package manager
 
-**Features shown:**
-1. Input form on the left (goals, experience level)
-2. Equipment and injury inputs on the right
-3. Generated workout plan with tables
-4. Download and swap exercise features
+---
 
 ## Setup
 
@@ -153,7 +159,7 @@ uv --version
 ```bash
 # Clone the repository
 git clone <your-repo-url>
-cd Session2_Assignment
+cd AI_Workout_Plan_Generator
 
 # Create virtual environment
 uv venv
@@ -199,7 +205,7 @@ Open in browser: `http://localhost:8501`
 ## Project Structure
 
 ```
-Session2_Assignment/
+AI_Workout_Plan_Generator/
 ├── app.py                      # Main Streamlit application
 ├── requirements.txt            # Python dependencies
 ├── .env                        # Environment variables (not in repo)
@@ -207,17 +213,10 @@ Session2_Assignment/
 ├── README.md                   # This file
 ├── images/
 │   └── Workout_Generator_UI_Screenshot.jpg
-└── docs/
-    └── AI Engineering Cohort - Assignment.pdf
+└── project_instructions/
+    ├── AI_Workout_Plan_Generator_Requirement.pdf
+    └── AI_Workout_Plan_Generator_Requirement.md
 ```
-
-## Tech Stack
-
-- **Python 3.10+**
-- **Streamlit** - Web UI framework
-- **Groq API** - LLM inference
-- **python-dotenv** - Environment variable management
-- **uv** - Fast Python package manager
 
 ## Error Handling
 
@@ -234,25 +233,6 @@ The app handles common errors gracefully:
 - No API keys exposed in code
 - `.env` file excluded from git
 
-## Assignment Rubric Coverage
-
-| Criteria | Weight | Status |
-|----------|--------|--------|
-| App runs without crashing on invalid input | 20% | ✅ |
-| Structured inputs passed correctly | 25% | ✅ |
-| Prompt design respects constraints | 30% | ✅ |
-| Error handling | 15% | ✅ |
-| Code quality (type hints, functions) | 10% | ✅ |
-
-## Stretch Goals Implemented
-
-- [x] Regenerate button
-- [x] Session state persistence
-- [x] Download as .md file
-- [x] Swap exercise feature
-
 ## Author
 
 **Himesh Sarkari**
-
-Built as part of the Codebasics AI Engineering Cohort - Session 2 Assignment.
