@@ -17,3 +17,4 @@ langchain_classic
 
 # FastAPI Backend
 fastapi[standard]
+pyjwt

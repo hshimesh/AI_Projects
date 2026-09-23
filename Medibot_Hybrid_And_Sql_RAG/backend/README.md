@@ -12,8 +12,13 @@ FastAPI backend for MediBot RAG chatbot with Role-Based Access Control (RBAC).
 ├──────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                   │
 │  ┌──────────────┐                                                                │
-│  │   main.py    │  POST /chat                                                    │
-│  │  (FastAPI)   │─────────────────────────────────────────┐                      │
+│  │   main.py    │  POST /chat + Authorization: Bearer <token>                    │
+│  │  (FastAPI)   │                                                                │
+│  │              │  ┌──────────────────────────────────┐                          │
+│  │              │  │      get_current_user()          │                          │
+│  │              │  │  verify JWT → role  (401 if not) │                          │
+│  │              │  └──────────────────────────────────┘                          │
+│  │              │─────────────────────────────────────────┐                      │
 │  └──────────────┘                                         │                      │
 │                                                           ▼                      │
 │                              ┌─────────────────────────────────────────────────┐ │
@@ -82,13 +87,24 @@ source ~/.bashrc
 ```
 
 #### 3. Create .env File
-Create a `.env` file in the project root with your Groq API key:
+
+First generate a signing secret for the auth tokens — never reuse someone else's,
+and never commit it:
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Then create a `.env` file in the project root:
 ```bash
 # .env
 GROQ_API_KEY=gsk_your_api_key_here
 GROQ_MODEL=qwen/qwen3.8-27b
+JWT_SECRET=paste_the_generated_secret_here
 ```
-Get your free API key from: https://console.groq.com/keys
+Get your free Groq API key from: https://console.groq.com/keys
+
+The backend raises `RuntimeError` at startup if `JWT_SECRET` is missing, rather
+than falling back to an insecure default.
 
 #### 4. Create Virtual Environment
 ```bash
@@ -207,15 +223,17 @@ def store_in_qdrant(chunks: list[Document]):
 
 ### 2. Role-Based Access Control (RBAC)
 
-Users can only access documents from their authorized collections:
+Users can only access documents from their authorized collections. The `role`
+driving this filter comes from a verified bearer token, never from the request
+body — see [§7 Authentication](#7-authentication-jwt-with-sliding-expiry).
 
 | Role | Accessible Collections |
 |------|------------------------|
 | doctor | general, clinical, nursing |
 | nurse | general, nursing |
-| billing_executive | general, billing |
+| billing_executive | general, billing, mediassist.db |
 | technician | general, equipment |
-| admin | all collections |
+| admin | all collections + mediassist.db |
 
 **Code: RBAC Configuration** (`rag_pipeline.py`)
 ```python
@@ -341,9 +359,9 @@ Respond with ONLY one word: SQL or DOCUMENT"""),
 **Code: Chat Endpoint with Routing** (`main.py`)
 ```python
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
     question = request.question
-    role = request.role
+    role = user["role"]          # from the verified token, not the request body
     
     # Query routing: SQL RAG or Hybrid RAG?
     if is_analytical_question(question):
@@ -461,6 +479,64 @@ def sql_rag_chain(question: str, role: str) -> dict:
 
 ---
 
+### 7. Authentication (JWT with sliding expiry)
+
+RBAC is only as strong as the role it filters on. If the caller can state their own
+role, the filter is worthless — so the role must come from something the server
+issued and can verify.
+
+**How it works**
+
+`/login` checks the password and returns a token whose payload is signed with
+`JWT_SECRET`:
+
+```
+{"sub": "nurse.priya", "role": "nurse", "auth_time": ..., "iat": ..., "exp": ...}
+```
+
+The signature is `HMAC-SHA256(header + "." + payload, JWT_SECRET)`. Editing the
+payload to `"role": "admin"` invalidates it, and producing a matching signature
+requires the secret, which never leaves the server.
+
+**Code: the dependency that establishes identity** (`main.py`)
+```python
+def get_current_user(
+    response: Response,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict:
+    if credentials is None:
+        raise _unauthorized("Not authenticated. Log in to obtain a token.")
+
+    payload = verify_token(credentials.credentials)   # 401 on forged/expired
+
+    role = payload.get("role")
+    if role not in VALID_ROLES:
+        raise _unauthorized("Token contains an unrecognised role.")
+
+    # Slide the idle window, unless the session hit its absolute ceiling
+    auth_time = payload.get("auth_time", 0)
+    session_age_hours = (datetime.now(timezone.utc).timestamp() - auth_time) / 3600
+    if session_age_hours < JWT_MAX_SESSION_HOURS:
+        response.headers[REFRESH_HEADER] = mint_token(payload["sub"], role, auth_time)
+
+    return payload
+```
+
+Endpoints then declare `user: dict = Depends(get_current_user)` and read
+`user["role"]`. There is no `role` field on `ChatRequest` and no role path
+parameter on `/collections`, so the client has no way to assert one.
+
+**Sliding expiry.** Each authenticated response carries a replacement token with a
+fresh 30-minute window, so an active user is never logged out mid-conversation;
+30 minutes of *silence* ends the session. `auth_time` is copied forward unchanged
+through every renewal, which keeps the 8-hour ceiling anchored to the original
+login rather than the last refresh.
+
+**Why `Response` is injected into the dependency:** it lets the refresh happen in
+one place. Endpoints stay free of per-route token-renewal code.
+
+---
+
 ## Configuration
 
 ### Environment Variables (.env)
@@ -468,6 +544,18 @@ def sql_rag_chain(question: str, role: str) -> dict:
 ```bash
 GROQ_API_KEY=gsk_...         # Groq API key
 GROQ_MODEL=qwen/qwen3.8-27b  # LLM model (free tier friendly)
+JWT_SECRET=<random>          # Signs auth tokens - required, keep out of git
+```
+
+### Constants (main.py)
+
+Not secrets, so they live in code rather than `.env`:
+
+```python
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_MINUTES = 30      # Idle timeout, renewed on each request
+JWT_MAX_SESSION_HOURS = 8    # Absolute cap from login (~one shift)
+REFRESH_HEADER = "X-Refreshed-Token"
 ```
 
 ### Constants (rag_pipeline.py)
@@ -485,19 +573,28 @@ SQL_DB_PATH = "mediassist_data/db/mediassist.db"
 
 ## API Reference
 
+All endpoints except `/login` and `/health` require `Authorization: Bearer <token>`.
+
 ### POST /login
 ```json
 // Request
 {"username": "dr.mehta", "password": "doctor"}
 
 // Response
-{"role": "doctor", "collections": ["general", "clinical", "nursing"]}
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "role": "doctor",
+  "collections": ["general", "clinical", "nursing"]
+}
 ```
 
 ### POST /chat
+
+No `role` field — it is read from the verified token.
+
 ```json
-// Request (Hybrid RAG)
-{"question": "What is IV cannula size for pediatric?", "role": "nurse"}
+// Request (Hybrid RAG)   header: Authorization: Bearer <nurse token>
+{"question": "What is IV cannula size for pediatric?"}
 
 // Response
 {
@@ -511,8 +608,8 @@ SQL_DB_PATH = "mediassist_data/db/mediassist.db"
 ```
 
 ```json
-// Request (SQL RAG)
-{"question": "How many claims are pending?", "role": "admin"}
+// Request (SQL RAG)   header: Authorization: Bearer <admin token>
+{"question": "How many claims are pending?"}
 
 // Response
 {
@@ -521,6 +618,22 @@ SQL_DB_PATH = "mediassist_data/db/mediassist.db"
   "retrieval_type": "sql_rag",
   "role": "admin"
 }
+```
+
+Authenticated responses also carry `X-Refreshed-Token`, a replacement token with a
+fresh 30-minute window (sliding idle expiry).
+
+### GET /collections/{role}
+
+The path role must match the authenticated token's role, else 403.
+
+```json
+// GET /collections/nurse   header: Authorization: Bearer <nurse token>
+{"role": "nurse", "collections": ["general", "nursing"]}
+
+// GET /collections/admin   header: Authorization: Bearer <nurse token>
+// 403 Forbidden
+{"detail": "Authenticated as 'nurse' - cannot view collections for 'admin'."}
 ```
 
 ---
@@ -539,7 +652,10 @@ SQL_DB_PATH = "mediassist_data/db/mediassist.db"
 | `hybrid_rag_chain()` | rag_pipeline.py | Full Hybrid RAG pipeline |
 | `is_analytical_question()` | rag_pipeline.py | LLM-based query router |
 | `sql_rag_chain()` | rag_pipeline.py | SQL RAG for analytics queries |
-| `login()` | main.py | Authenticate user |
+| `mint_token()` | main.py | Create a signed JWT (sliding 30-min expiry) |
+| `verify_token()` | main.py | Verify signature + expiry, return claims |
+| `get_current_user()` | main.py | Dependency: establish role from token, refresh it |
+| `login()` | main.py | Authenticate user, issue token |
 | `chat()` | main.py | Main RAG endpoint |
 
 ---
@@ -552,6 +668,7 @@ Key packages used:
 - **Docling** - PDF/MD parsing with structure awareness
 - **Qdrant** - Vector database with hybrid search
 - **HuggingFace** - Embeddings (bge-m3) and cross-encoder
+- **PyJWT** - Signed session tokens (HS256)
 - **Groq** - LLM API (qwen3.8-27b)
 
 ---
@@ -560,6 +677,9 @@ Key packages used:
 
 | Issue | Solution |
 |-------|----------|
+| `RuntimeError: JWT_SECRET is not set` | Add `JWT_SECRET` to `.env` (see setup step 3) |
+| Every request returns 401 after a restart | Backend restarted with a different `JWT_SECRET`; existing tokens are void — log in again |
+| Frontend never sees the refreshed token | `expose_headers=[REFRESH_HEADER]` missing from the CORS middleware |
 | Groq rate limit error | Switch to a different model in `.env` or wait |
 | Import errors | Ensure venv is activated and dependencies installed |
 | Qdrant not found | Run `python backend/rag_pipeline.py` to create index |

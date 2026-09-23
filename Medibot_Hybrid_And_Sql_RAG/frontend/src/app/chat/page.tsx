@@ -3,6 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  chat as sendChat,
+  getToken,
+  getStoredUser,
+  msSinceLastActivity,
+  endSession,
+  IDLE_TIMEOUT_MS,
+} from "@/lib/api";
 
 interface Source {
   source_document: string;
@@ -22,7 +30,6 @@ interface User {
   username: string;
   role: string;
   collections: string[];
-  loginTime?: number;  // Timestamp for session timeout
 }
 
 const ROLE_COLORS: Record<string, { bg: string; text: string; badge: string }> = {
@@ -48,27 +55,30 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
   useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (!storedUser) {
-      window.location.href = "/login";
+    const storedUser = getStoredUser();
+    if (!getToken() || !storedUser) {
+      endSession();
       return;
     }
 
-    const userData = JSON.parse(storedUser);
-
-    // Check if session has expired (30 minute timeout)
-    const loginTime = userData.loginTime || 0;
-    const elapsed = Date.now() - loginTime;
-    if (elapsed > SESSION_TIMEOUT_MS) {
-      localStorage.removeItem("user");
-      window.location.href = "/login?expired=true";
+    // Idle timeout. The backend is the real enforcer (it stops refreshing the
+    // token after the same interval); this just avoids showing a dead UI to
+    // someone who left the tab open.
+    if (msSinceLastActivity() > IDLE_TIMEOUT_MS) {
+      endSession(true);
       return;
     }
 
-    setUser(userData);
+    setUser(storedUser);
+
+    const interval = setInterval(() => {
+      if (msSinceLastActivity() > IDLE_TIMEOUT_MS) {
+        endSession(true);
+      }
+    }, 60 * 1000);
+
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -90,35 +100,21 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://10.124.144.23:8000/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: input, role: user.role }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const botMessage: Message = {
-          id: Date.now() + 1,
-          type: "bot",
-          content: data.answer,
-          sources: data.sources,
-          retrieval_type: data.retrieval_type,
-        };
-        setMessages((prev) => [...prev, botMessage]);
-      } else {
-        const error = await response.json();
-        setMessages((prev) => [...prev, {
-          id: Date.now() + 1,
-          type: "bot",
-          content: "Error: " + (error.detail || "Request failed"),
-        }]);
-      }
-    } catch (err) {
+      // No role is sent - the backend reads it from the bearer token.
+      const data = await sendChat(input);
       setMessages((prev) => [...prev, {
         id: Date.now() + 1,
         type: "bot",
-        content: "Network error: " + String(err),
+        content: data.answer,
+        sources: data.sources,
+        retrieval_type: data.retrieval_type,
+      }]);
+    } catch (err) {
+      // A 401 already redirected to /login; anything else is shown inline.
+      setMessages((prev) => [...prev, {
+        id: Date.now() + 1,
+        type: "bot",
+        content: "Error: " + (err instanceof Error ? err.message : String(err)),
       }]);
     } finally {
       setLoading(false);
@@ -126,8 +122,7 @@ export default function ChatPage() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("user");
-    window.location.href = "/login";
+    endSession();
   };
 
   if (!user) {

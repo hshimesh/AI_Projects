@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+import { login } from "@/lib/api";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -24,27 +25,11 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://10.124.144.23:8000/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        localStorage.setItem("user", JSON.stringify({
-          username,
-          role: data.role,
-          collections: data.collections,
-          loginTime: Date.now(),  // Store login timestamp for session timeout
-        }));
-        window.location.href = "/chat";
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || "Login failed");
-      }
+      // login() stores the signed token and user details in localStorage.
+      await login({ username, password });
+      window.location.href = "/chat";
     } catch (err) {
-      setError("Network error: " + String(err));
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }

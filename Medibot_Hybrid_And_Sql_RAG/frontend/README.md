@@ -51,7 +51,26 @@ npm run dev -- -H 0.0.0.0
 
 ### Backend API URL
 
-The backend API URL is hardcoded in `src/lib/api.ts` as `http://localhost:8000` since frontend and backend run on the same server.
+The backend runs on the same host as the frontend on port 8000, so `src/lib/api.ts`
+derives the API URL from the browser's own address:
+
+```typescript
+`${window.location.protocol}//${window.location.hostname}:8000`
+```
+
+This works unchanged at `localhost:3000` and over the LAN at `<server-ip>:3000`,
+with no per-machine configuration.
+
+### Authentication
+
+All backend calls go through `src/lib/api.ts`. Login stores the signed JWT in
+`localStorage`; `authFetch()` attaches it as `Authorization: Bearer <token>` on
+every request, swaps in the refreshed token from the `X-Refreshed-Token` response
+header, and redirects to `/login?expired=true` on a 401.
+
+The role is **never** sent to the backend — it is read from the verified token
+server-side. The copy held in `localStorage` is used only to render the sidebar
+badge and collection list.
 
 ### Cross-Origin Access (for network access)
 
@@ -78,7 +97,7 @@ const nextConfig: NextConfig = {
 | dr.mehta | doctor | Doctor | general, clinical, nursing |
 | nurse.priya | nurse | Nurse | general, nursing |
 | billing.ravi | billing | Billing Executive | general, billing |
-| tech.anand | technician | Technician | general, equipment |
+| tech.anand | tech | Technician | general, equipment |
 | admin.sys | admin | Admin | all collections |
 
 ---
@@ -96,7 +115,9 @@ const nextConfig: NextConfig = {
 - [x] Markdown rendering in bot responses (bold, lists, code, tables)
 - [x] Loading animation while waiting for response
 - [x] Logout functionality
-- [x] Session timeout (30 minutes)
+- [x] JWT bearer token auth (role never sent by the client)
+- [x] Sliding 30-minute idle timeout (token renewed on each request)
+- [x] Automatic redirect to login on 401
 - [x] Scrollable chat window (header/input fixed)
 - [x] Dark blue gradient theme with #147CFA accents
 - [x] Medical cross logo icon
@@ -119,7 +140,7 @@ frontend/
 │   │   └── chat/
 │   │       └── page.tsx        # Chat interface
 │   └── lib/
-│       └── api.ts              # API utility functions (includes hardcoded API URL)
+│       └── api.ts              # API client: auth, token refresh, 401 handling
 ├── next.config.ts              # Next.js config (allowedDevOrigins)
 ├── package.json                # Dependencies
 └── README.md                   # This file
@@ -173,7 +194,9 @@ Restart dev server after config changes
 Make sure backend is running with `--host 0.0.0.0`
 
 ### Session expired message
-Sessions timeout after 30 minutes - login again
+Sessions end after 30 minutes of inactivity. Activity renews the window, so this
+only appears after a genuine idle period (or if the backend restarted with a
+different `JWT_SECRET`).
 
 ---
 

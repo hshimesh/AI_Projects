@@ -222,15 +222,18 @@ def chunk_document(doc, collection_name: str, file_path: Path) -> list[Document]
         # contextualize() adds some heading context, but not full parent hierarchy
         chunk_text = chunker.contextualize(chunk)
 
-        # Detect chunk type from Docling's doc_items (table, heading, code, or default text)
+        # Detect chunk type from Docling's doc_items.
+        # Note: every doc_item is the same Python class (DocItem), so the content
+        # type lives in the `.label` field - inspecting type(item).__name__ would
+        # classify everything, including dosage tables, as plain text.
         chunk_type = "text"
         if hasattr(chunk, 'meta') and chunk.meta:
             if hasattr(chunk.meta, 'doc_items') and chunk.meta.doc_items:
                 first_item = chunk.meta.doc_items[0]
-                item_label = str(type(first_item).__name__).lower()
+                item_label = str(getattr(first_item, "label", "")).lower()
                 if "table" in item_label:
                     chunk_type = "table"
-                elif "heading" in item_label or "section" in item_label:
+                elif "section_header" in item_label or "title" in item_label or "heading" in item_label:
                     chunk_type = "heading"
                 elif "code" in item_label:
                     chunk_type = "code"
@@ -562,6 +565,16 @@ def hybrid_rag_chain(question: str, role: str, top_n: int = 3, k: int = 10) -> d
         col for col, roles in COLLECTION_ACCESS_ROLES.items() if role in roles
     ]
 
+    # Fixed replies for small talk. Defined as variables so the prompt below and
+    # the source-suppression check further down cannot drift apart.
+    greeting_reply = (
+        f"Hello, I'm MediBot - MediAssist Health Network's internal assistant. "
+        f"As a {role}, you can ask me about: {', '.join(accessible_collections)}."
+    )
+    acknowledgement_reply = "Happy to help. Let me know if you need anything else."
+    farewell_reply = "Goodbye. Remember to log out if you are leaving your workstation."
+    small_talk_replies = (greeting_reply, acknowledgement_reply, farewell_reply)
+
     # System prompt with role-aware messaging for better "access denied" responses
     system_prompt = f"""You are MediBot, a helpful medical assistant for MediAssist Health Network.
 
@@ -570,6 +583,15 @@ Accessible document collections: {', '.join(accessible_collections)}
 
 Answer the user's question using ONLY the information provided in the context below.
 Keep answers concise and professional.
+
+If the user's message is ONLY a greeting or pleasantry and contains no question
+(for example "hi", "hello", "good morning", "thanks", "ok", "bye"):
+- IGNORE the context completely and do NOT cite any sources
+- For a greeting, respond EXACTLY with: "{greeting_reply}"
+- For thanks or an acknowledgement, respond EXACTLY with: "{acknowledgement_reply}"
+- For a farewell, respond EXACTLY with: "{farewell_reply}"
+- A message containing a question is NOT a pleasantry, even if it opens with a
+  greeting: "Hi, what is the IV cannula size?" must be answered from the context.
 
 If you find the answer in the context:
 - Provide the answer
@@ -598,10 +620,12 @@ Context:
     result = rag_chain.invoke({"input": question})
     answer = result.get("answer", "No answer generated")
 
-    # Only include sources if the answer was found in the context
-    # If LLM says "I don't have that information", return empty sources
+    # Only include sources if the answer actually came from the context.
+    # Two cases return no sources: the "I don't have that information" fallback,
+    # and small talk (where the retrieved documents are irrelevant to the reply).
     sources = []
-    if "I don't have that information" not in answer:
+    is_small_talk = any(reply[:30] in answer for reply in small_talk_replies)
+    if "I don't have that information" not in answer and not is_small_talk:
         for doc in result.get("context", []):
             sources.append({
                 "source_document": doc.metadata.get("source_document", "unknown"),
@@ -641,6 +665,10 @@ ROUTING RULES:
 
 → DOCUMENT: Asking about DEFINITIONS, PROCEDURES, POLICIES, or HOW-TO information
    Examples: "What are claim rejection codes?", "What do fault codes mean?", "How to insert NGT?"
+
+→ DOCUMENT: Greetings and small talk with no data question in them
+   Examples: "hi", "hello", "good morning", "thanks", "bye"
+   These are not analytical questions and must never be routed to SQL.
 
 KEY DISTINCTION:
 - "How many claims are pending?" → SQL (counting actual claim records)
@@ -824,7 +852,11 @@ If you find the answer in the SQL result:
 
 If the SQL result is empty or doesn't answer the question:
 - Do NOT cite any source
-- Respond that the data is not available"""),
+- Respond that the data is not available
+
+If the user's message is only a greeting or pleasantry ("hi", "hello", "thanks", "bye"):
+- Do NOT cite any source and do NOT mention the database or SQL
+- Reply briefly and invite them to ask a question about the data"""),
         ("human", "Question: {question}\nSQL Result: {result}\n\nAnswer:"),
     ])
     response = answer_prompt | llm
