@@ -1,4 +1,4 @@
-# Eval & Guardrail Pipeline
+# Evals, Guardrails & Observability 
 
 A guardrail + evaluation layer wrapped around [MediBot](../backend/README.md), the
 Hybrid + SQL RAG chatbot built in the previous assignment. **This folder is graded
