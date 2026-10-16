@@ -1,0 +1,21 @@
+{
+  "n_checks": 4,
+  "checks": {
+    "has_citation": {
+      "passed": 1,
+      "total": 1
+    },
+    "restricted_role_refused": {
+      "passed": 1,
+      "total": 1
+    },
+    "non_empty_answer": {
+      "passed": 1,
+      "total": 1
+    },
+    "citation_access": {
+      "passed": 1,
+      "total": 1
+    }
+  }
+}

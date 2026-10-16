@@ -18,3 +18,10 @@ langchain_classic
 # FastAPI Backend
 fastapi[standard]
 pyjwt
+
+# Guardrail & Evaluation Pipeline
+openevals
+langsmith
+ragas
+datasets
+langchain-google-genai

@@ -34,6 +34,7 @@ from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
 from langchain_community.utilities import SQLDatabase
 from langchain_classic.chains import create_sql_query_chain
+from langsmith import traceable
 import os
 import re
 from dotenv import load_dotenv
@@ -388,6 +389,9 @@ def get_vectorstore():
     return vectorstore
 
 
+# Deliberately not @traceable, unlike get_reranking_retriever below: nothing
+# on the /chat path calls this - hybrid_rag_chain uses the reranking variant -
+# so a decorator here would never produce a span.
 def get_hybrid_retriever_with_rbac(vectorstore, role: str, k: int = 5):
     """
     Create a retriever with RBAC filter applied.
@@ -447,6 +451,7 @@ def get_hybrid_retriever_with_rbac(vectorstore, role: str, k: int = 5):
 # STEP 5: RERANKING WITH CROSS-ENCODER
 # ============================================
 
+@traceable(name="get_reranking_retriever")
 def get_reranking_retriever(vectorstore, role: str, top_n: int = 3, k: int = 10):
     """
     Create a retriever with RBAC filter + cross-encoder reranking.
@@ -522,7 +527,8 @@ def get_reranking_retriever(vectorstore, role: str, top_n: int = 3, k: int = 10)
     return reranking_retriever
 
 
-def hybrid_rag_chain(question: str, role: str, top_n: int = 3, k: int = 10) -> dict:
+@traceable(name="hybrid_rag_chain", run_type="chain")
+def hybrid_rag_chain(question: str, role: str, top_n: int = 3, k: int = 10, content_chars: int | None = 500) -> dict:
     """
     Hybrid RAG with RBAC and reranking - returns structured response for FastAPI.
 
@@ -537,6 +543,11 @@ def hybrid_rag_chain(question: str, role: str, top_n: int = 3, k: int = 10) -> d
         role: User's role for RBAC filtering
         top_n: Number of documents after reranking (default 3)
         k: Initial candidates before reranking (default 10)
+        content_chars: Max characters of chunk text to include per source
+            (default 500, matching the production /chat response). Pass None
+            for untruncated chunk text - used by eval_guardrail/evaluation's
+            RAGAS scoring, which needs the full retrieved text to judge
+            context_precision/context_recall accurately.
 
     Returns:
         dict with keys: answer, sources, retrieval_type, role
@@ -630,7 +641,11 @@ Context:
             sources.append({
                 "source_document": doc.metadata.get("source_document", "unknown"),
                 "section_title": doc.metadata.get("section_title", "unknown"),
-                "collection": doc.metadata.get("collection", "unknown")
+                "collection": doc.metadata.get("collection", "unknown"),
+                # Truncated chunk text - internal use only (the output guardrail
+                # checks the answer is actually grounded in this). Stripped
+                # before the response is sent to the client; see backend/main.py.
+                "content": doc.page_content if content_chars is None else doc.page_content[:content_chars],
             })
 
     return {
@@ -678,6 +693,7 @@ KEY DISTINCTION:
 """
 
 
+@traceable(name="is_analytical_question", run_type="chain")
 def is_analytical_question(question: str) -> bool:
     """
     Use LLM to classify if a question should use SQL RAG or Hybrid RAG.
@@ -781,6 +797,7 @@ def clean_sql(raw: str) -> str:
 # STEP 6: SQL RAG
 # ============================================
 
+@traceable(name="sql_rag_chain", run_type="chain")
 def sql_rag_chain(question: str, role: str) -> dict:
     """
     SQL RAG: Answer analytical questions from the database.

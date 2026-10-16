@@ -1,0 +1,2 @@
+user_input,response,reference,faithfulness,answer_relevancy,context_precision,context_recall,answer_correctness,id,category,collection,role
+When was MediAssist Health Network founded and where?,MediAssist Health Network was founded in 2008 in Hyderabad. 【About MediAssist Health Network】,MediAssist Health Network was founded in 2008 in Hyderabad.,1.0,0.9962121678408901,0.9999999999,1.0,0.9826370377106204,GEN-01,normal,general,nurse

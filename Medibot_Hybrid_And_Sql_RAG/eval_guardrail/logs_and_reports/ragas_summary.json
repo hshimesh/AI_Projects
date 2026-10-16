@@ -1,0 +1,30 @@
+{
+  "n_questions": 1,
+  "aggregate": {
+    "faithfulness": {
+      "mean": 1.0,
+      "scored": 1,
+      "total": 1
+    },
+    "answer_relevancy": {
+      "mean": 0.9962,
+      "scored": 1,
+      "total": 1
+    },
+    "context_precision": {
+      "mean": 1.0,
+      "scored": 1,
+      "total": 1
+    },
+    "context_recall": {
+      "mean": 1.0,
+      "scored": 1,
+      "total": 1
+    },
+    "answer_correctness": {
+      "mean": 0.9826,
+      "scored": 1,
+      "total": 1
+    }
+  }
+}

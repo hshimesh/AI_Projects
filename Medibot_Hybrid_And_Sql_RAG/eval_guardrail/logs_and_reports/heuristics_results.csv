@@ -1,0 +1,5 @@
+id,check,passed,reason
+GEN-01,has_citation,True,has >=1 cited source
+GEN-01,restricted_role_refused,True,"role 'nurse' has access to 'general', refusal not required"
+GEN-01,non_empty_answer,True,answer is non-empty
+GEN-01,citation_access,True,all 1 cited collection(s) readable by 'nurse'

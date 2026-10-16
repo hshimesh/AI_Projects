@@ -4,6 +4,7 @@ REST API for MediBot RAG chatbot with RBAC
 """
 
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -11,15 +12,20 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from langchain_core.callbacks import get_usage_metadata_callback
+from langsmith import get_current_run_tree, traceable
 from pydantic import BaseModel
 
 # Import from ingest.py to avoid duplication
-from backend.rag_pipeline import (
-    COLLECTION_ACCESS_ROLES,
-    is_analytical_question,
-    sql_rag_chain,
-    hybrid_rag_chain,
-)
+from backend.rag_pipeline import COLLECTION_ACCESS_ROLES
+
+# run_guarded_chat is the shared input-guard -> route -> output-guard
+# pipeline (backend/chat_pipeline.py) - the only integration point into the
+# target system, also reused by eval_guardrail/evaluation/ragas_eval.py so
+# the evaluation pipeline exercises the exact same guardrail sequencing a
+# real user's request goes through.
+from backend.chat_pipeline import run_guarded_chat
+from eval_guardrail.guardrails.core import log_request_metrics, new_request_id
 
 load_dotenv()
 
@@ -356,22 +362,87 @@ def chat(request: ChatRequest, user: dict = Depends(get_current_user)):
         Authorization: Bearer <admin token>
         -> {"answer": "There are 17 pending claims...", "sources": [...], "retrieval_type": "sql_rag", "role": "admin"}
     """
-    question = request.question
-    role = user["role"]
+    # The real work lives in _handle_chat so that @traceable wraps it rather
+    # than this endpoint. Decorating the endpoint itself would be simpler, but
+    # traceable appends a keyword-only `config=None` to the signature, which
+    # FastAPI reads as an extra optional QUERY PARAMETER - it would show up in
+    # /docs and be settable by any caller. Keeping the decorator one level in
+    # leaves the public API of the target system exactly as it was.
+    return _handle_chat(request.question, user["role"])
 
-    # Query routing: SQL RAG or Hybrid RAG?
-    if is_analytical_question(question):
-        # SQL RAG for analytical questions
-        result = sql_rag_chain(question, role)
-    else:
-        # Hybrid RAG for document-based questions
-        result = hybrid_rag_chain(question, role)
+
+@traceable(name="chat_request", run_type="chain")
+def _handle_chat(question: str, role: str) -> ChatResponse:
+    """
+    One /chat request, start to finish - the unit a reviewer opens in
+    LangSmith, and the unit one row of request_metrics.jsonl describes.
+
+    Everything already decorated (both guardrails, the router, the RAG
+    chains) nests underneath this as child spans, so a single request is a
+    single expandable trace instead of four unrelated top-level runs.
+
+    Takes `question` and `role` rather than the request/user objects on
+    purpose: `user` is the decoded JWT payload (username, issued-at,
+    expiry), and traceable records its inputs verbatim. Passing only these
+    two keeps the JWT claims off LangSmith while still recording exactly
+    what the system saw.
+    """
+    request_id = new_request_id()
+
+    # Stamp the trace with the same request_id that goes into
+    # guardrail_events.jsonl, so a suspicious log line can be pulled up as a
+    # LangSmith trace (and back again) by searching that id, instead of
+    # guessing from timestamps. Returns None when tracing is switched off.
+    run = get_current_run_tree()
+    if run is not None:
+        run.add_metadata({"request_id": request_id, "role": role})
+
+    started = time.monotonic()
+    # get_usage_metadata_callback() tracks token usage via a context
+    # variable, so it picks up every LLM call made anywhere inside this
+    # block - the guardrail judges, the router, and whichever RAG chain runs
+    # - without having to thread a `config=` argument down through
+    # rag_pipeline.py and both guard modules.
+    with get_usage_metadata_callback() as usage:
+        response = _run_chat_pipeline(question, role, request_id)
+
+    # Logged on every path, including both guardrail refusals: a blocked
+    # request still costs latency and judge tokens, and a reviewer asking
+    # "what did this request cost" needs an answer for those too.
+    log_request_metrics(
+        request_id=request_id,
+        role=role,
+        retrieval_type=response.retrieval_type,
+        total_latency_ms=(time.monotonic() - started) * 1000,
+        usage_by_model=usage.usage_metadata,
+    )
+    return response
+
+
+def _run_chat_pipeline(question: str, role: str, request_id: str) -> ChatResponse:
+    """
+    Thin adapter over run_guarded_chat() (backend/chat_pipeline.py): runs the
+    shared input-guard -> route -> output-guard pipeline, then converts its
+    plain dict into the ChatResponse this endpoint promises.
+
+    content_chars=500 here matches the original inlined behaviour exactly;
+    eval_guardrail/evaluation/ragas_eval.py calls run_guarded_chat directly
+    with content_chars=None instead, since RAGAS's context_recall needs
+    untruncated chunk text.
+    """
+    result = run_guarded_chat(question, role, request_id, content_chars=500)
+
+    # Strip "content" (raw chunk text, internal-only - see rag_pipeline.py)
+    # before the response leaves the server; the frontend never needs it.
+    public_sources = [
+        {k: v for k, v in s.items() if k != "content"} for s in result.get("sources", [])
+    ]
 
     return ChatResponse(
         answer=result["answer"],
-        sources=result.get("sources", []),
+        sources=public_sources,
         retrieval_type=result["retrieval_type"],
-        role=result["role"]
+        role=result["role"],
     )
 
 
