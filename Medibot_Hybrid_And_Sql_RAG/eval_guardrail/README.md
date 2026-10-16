@@ -899,7 +899,13 @@ All thresholds met.
 | input | 87 | 18 | error=2, off_topic=5, prompt_injection=5, role_override=6, safe=87 |
 | output | 75 | 9 | error=2, fabrication=7, safe=75 |
 
-## RAGAS metrics — Aggregate
+## RAGAS metrics
+
+| Question | Answer | Category | Collection | Faithfulness | Answer Relevancy | Context Precision | Context Recall | Answer Correctness |
+|---|---|---|---|---|---|---|---|---|
+| When was MediAssist Health Network founded and where? | MediAssist Health Network was founded in 2008 in Hyderabad. 【About MediAssist Health Network】 | normal | general | 1.0000 | 0.9962 | 1.0000 | 1.0000 | 0.9826 |
+
+**Aggregate**
 
 | Metric | Mean | Threshold | Scored/Total | Result |
 |---|---|---|---|---|
@@ -911,9 +917,21 @@ All thresholds met.
 
 ## LLM-as-a-Judge (answer quality, 1-5)
 
+| Question | Answer | Category | Collection | Role | Score | Justification |
+|---|---|---|---|---|---|---|
+| When was MediAssist Health Network founded and where? | MediAssist Health Network was founded in 2008 in Hyderabad. 【About MediAssist Health Network】 | normal | general | nurse | 5 | The response accurately states the founding year (2008) and location (Hyderabad), which perfectly matches the reference and the retrieved context. |
+
+**Aggregate**
+
 Mean score: **5.00** (threshold 3.5, 1/1 scored) ✅
 
-## Heuristic checks — Aggregate
+## Heuristic checks
+
+| Question | Answer | has_citation | restricted_role_refused | non_empty_answer | citation_access |
+|---|---|---|---|---|---|
+| When was MediAssist Health Network founded and where? | MediAssist Health Network was founded in 2008 in Hyderabad. 【About MediAssist Health Network】 | ✅ | ✅ | ✅ | ✅ |
+
+**Aggregate**
 
 | Check | Passed/Total | Rate | Threshold | Result |
 |---|---|---|---|---|
